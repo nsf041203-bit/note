@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: notesai
+    runtime: python
+    plan: free
+    # 安装精简依赖（不含本地重型模型，适配免费套餐）
+    buildCommand: pip install -r requirements-deploy.txt
+    # 用 Render 提供的 $PORT 启动
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.10.0"
+      # ModelScope API Key —— 不写死在仓库里，部署后在 Render 后台手动填入
+      - key: MODELSCOPE_API_KEY
+        sync: false
+      # 默认模型（可选）
+      - key: MODELSCOPE_MODEL
+        value: "Qwen/Qwen2.5-72B-Instruct"

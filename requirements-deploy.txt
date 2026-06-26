@@ -1,0 +1,20 @@
+# ===== 云端部署精简依赖 =====
+# 说明：去掉了本地重型模型（openai-whisper / paddlepaddle / paddleocr / weasyprint），
+# 它们体积达数 GB，Render 免费套餐（512MB）无法安装运行。
+# 云端版支持：AI 文字结构化、AI 对话、Word 导出、PDF/PPT/图片在线预览、思维导图。
+# 云端版不支持：音频转文字、图片 OCR（需在本地完整环境使用 requirements.txt）。
+
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+python-multipart==0.0.9
+aiofiles==23.2.1
+python-dotenv==1.0.1
+
+# AI 文本结构化与对话 (ModelScope OpenAI 兼容接口)
+openai==1.40.0
+
+# 文档处理与导出
+markdown==3.7
+python-docx==1.1.2
+pdfminer.six==20231228
+python-pptx==0.6.23
