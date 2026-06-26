@@ -245,6 +245,109 @@ async def refine_notes(payload: dict):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/api/models")
+async def list_models():
+    """返回可供选择的 AI 模型列表"""
+    from modules.structurer import AVAILABLE_MODELS, DEFAULT_MODEL
+    return JSONResponse({"models": AVAILABLE_MODELS, "default": DEFAULT_MODEL})
+
+
+@app.post("/api/chat")
+async def chat_api(payload: dict):
+    """多模型对话接口。payload: {messages:[{role,content}], model, notes_context}"""
+    messages = payload.get("messages", [])
+    model = payload.get("model", "")
+    notes_context = payload.get("notes_context", "")
+    if not messages:
+        return JSONResponse({"error": "缺少 messages"}, status_code=400)
+    try:
+        from modules.structurer import chat
+        reply = await asyncio.to_thread(chat, messages, model, notes_context)
+        return JSONResponse({"reply": reply})
+    except Exception as e:
+        print("\n[AI对话异常]")
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/preview/{session_id}/{filename}")
+async def preview_file(session_id: str, filename: str):
+    """文件预览：PPT/Word 转 PDF（需 LibreOffice），其他类型直接返回原文件。"""
+    safe = os.path.basename(filename)
+    src = UPLOAD_DIR / session_id / safe
+    if not src.exists():
+        return JSONResponse({"error": "file not found"}, status_code=404)
+
+    ext = src.suffix.lower()
+    if ext in {".ppt", ".pptx", ".doc", ".docx"}:
+        # 转换缓存目录
+        preview_dir = OUTPUT_DIR / "previews" / session_id
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        pdf_path = preview_dir / (src.stem + ".pdf")
+        if not pdf_path.exists():
+            ok = await asyncio.to_thread(_convert_to_pdf, str(src), str(preview_dir))
+            if not ok or not pdf_path.exists():
+                # 转换失败兜底：提取文字
+                return JSONResponse({
+                    "fallback": True,
+                    "text": _extract_text_fallback(src),
+                }, status_code=200)
+        return FileResponse(pdf_path, media_type="application/pdf")
+
+    # 其它类型直接给原文件
+    return FileResponse(src)
+
+
+def _convert_to_pdf(src_path: str, out_dir: str) -> bool:
+    """用 LibreOffice 将 PPT/Word 转为 PDF。返回是否成功。"""
+    import shutil
+    import subprocess
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        # 常见 Windows 安装路径兜底
+        for cand in (
+            r"C:\Program Files\LibreOffice\program\soffice.exe",
+            r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        ):
+            if os.path.exists(cand):
+                soffice = cand
+                break
+    if not soffice:
+        print("[预览] 未找到 LibreOffice，无法转换 PDF")
+        return False
+    try:
+        subprocess.run(
+            [soffice, "--headless", "--convert-to", "pdf", "--outdir", out_dir, src_path],
+            check=True, timeout=120,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception as e:
+        print(f"[预览] LibreOffice 转换失败: {e}")
+        return False
+
+
+def _extract_text_fallback(src: Path) -> str:
+    """转换失败时提取文字内容用于展示。"""
+    ext = src.suffix.lower()
+    try:
+        if ext in {".ppt", ".pptx"}:
+            from pptx import Presentation
+            prs = Presentation(str(src))
+            pages = []
+            for idx, slide in enumerate(prs.slides, 1):
+                texts = [sh.text_frame.text for sh in slide.shapes if sh.has_text_frame]
+                pages.append(f"# 第 {idx} 页\n\n" + "\n".join(t for t in texts if t.strip()))
+            return "\n\n---\n\n".join(pages)
+        elif ext in {".doc", ".docx"}:
+            from docx import Document
+            doc = Document(str(src))
+            return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+    except Exception as e:
+        return f"无法预览该文件：{e}"
+    return "无法预览该文件。"
+
+
 @app.post("/api/export/docx")
 async def export_docx(payload: dict):
     """将前端编辑后的 Markdown 内容导出为 Word 文档。"""

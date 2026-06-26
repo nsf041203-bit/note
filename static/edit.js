@@ -3,46 +3,34 @@
 const sessionId = location.pathname.split('/').pop();
 let sessionData = null;
 let materials = [];
-let tdService = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
+let currentMindmapMd = '';
+let mmInstance = null;
+const tdService = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
 let saveTimer = null;
 
 async function init() {
-    // 加载会话详情
     const res = await fetch(`/api/session/${sessionId}/detail`);
     if (!res.ok) { document.getElementById('editor').innerHTML = '<p>会话不存在</p>'; return; }
     sessionData = await res.json();
 
-    // 返回课程链接
     document.getElementById('backToCourse').href = `/course/${sessionData.course_id}`;
 
-    // 渲染编辑器内容
     const md = sessionData.notes_md || '';
     document.getElementById('editor').innerHTML = md ? marked.parse(md)
         : '<p style="color:#A0A096;">暂无 AI 总结内容，可在此添加…</p>';
 
-    // 教师提纲
-    await loadOutline();
+    // 思维导图
+    if (sessionData.mindmap_md) {
+        currentMindmapMd = sessionData.mindmap_md;
+        document.getElementById('mindmapBlock').style.display = 'block';
+        renderMindmap(currentMindmapMd);
+    }
 
-    // 资料文件
     await loadMaterials();
-
-    // 聊天记录
+    await loadModels();
     renderChat();
 
-    // 绑定自动保存
-    const editor = document.getElementById('editor');
-    editor.addEventListener('input', scheduleSave);
-}
-
-// ---- 教师提纲 ----
-async function loadOutline() {
-    // 提纲存在 outlines 表，这里通过 ai_analysis 兜底；若有专门接口可替换
-    const box = document.getElementById('outlineBox');
-    if (sessionData.outline_text) {
-        box.textContent = sessionData.outline_text;
-    } else {
-        box.textContent = '暂无提纲';
-    }
+    document.getElementById('editor').addEventListener('input', scheduleSave);
 }
 
 // ---- 资料预览 ----
@@ -69,24 +57,44 @@ function selectFile(i) {
     const m = materials[i];
     const area = document.getElementById('previewArea');
     const kind = m.kind;
+    const rawUrl = m.url;
+    const previewUrl = `/api/preview/${sessionId}/${encodeURIComponent(m.name)}`;
 
     if (kind === 'image') {
-        area.innerHTML = `<img src="${m.url}" alt="${escapeHtml(m.name)}">`;
+        area.innerHTML = `<img src="${rawUrl}" alt="${escapeHtml(m.name)}">`;
     } else if (kind === 'audio') {
         area.innerHTML = `<div class="preview-empty"><div class="ico">🎤</div><div>${escapeHtml(m.name)}</div></div>
-            <audio controls src="${m.url}"></audio>`;
-    } else if (kind === 'pdf') {
-        area.innerHTML = `<iframe src="${m.url}"></iframe>`;
-    } else if (kind === 'text') {
-        area.innerHTML = `<iframe src="${m.url}"></iframe>`;
+            <audio controls src="${rawUrl}"></audio>`;
+    } else if (kind === 'pdf' || kind === 'text') {
+        area.innerHTML = `<iframe src="${rawUrl}"></iframe>`;
+    } else if (kind === 'ppt' || kind === 'word') {
+        // 通过后端转 PDF 预览
+        area.innerHTML = `<div class="preview-empty"><div class="ico">⏳</div><div>正在转换预览，请稍候…</div></div>`;
+        fetch(previewUrl).then(async (r) => {
+            const ct = r.headers.get('content-type') || '';
+            if (ct.includes('application/pdf')) {
+                area.innerHTML = `<iframe src="${previewUrl}"></iframe>`;
+            } else {
+                const data = await r.json().catch(() => ({}));
+                if (data.text) {
+                    area.innerHTML = `<div class="md-text">${marked.parse(data.text)}</div>`;
+                } else {
+                    area.innerHTML = `<div class="preview-empty"><div class="ico">${matIcon(kind)}</div>
+                        <div>${escapeHtml(m.name)}</div>
+                        <div class="preview-note">无法在线预览</div>
+                        <a class="back-btn" style="margin-top:1rem;display:inline-block;" href="${rawUrl}" target="_blank">下载原文件</a></div>`;
+                }
+            }
+        }).catch(() => {
+            area.innerHTML = `<div class="preview-empty"><div class="ico">${matIcon(kind)}</div>
+                <div>预览失败</div>
+                <a class="back-btn" style="margin-top:1rem;display:inline-block;" href="${rawUrl}" target="_blank">下载原文件</a></div>`;
+        });
     } else {
-        // PPT / Word：浏览器无法直接渲染，提供下载/新窗口打开
-        area.innerHTML = `<div class="preview-empty">
-            <div class="ico">${matIcon(kind)}</div>
+        area.innerHTML = `<div class="preview-empty"><div class="ico">${matIcon(kind)}</div>
             <div>${escapeHtml(m.name)}</div>
             <div class="preview-note">该格式无法在线预览</div>
-            <a class="back-btn" style="margin-top:1rem; display:inline-block;" href="${m.url}" target="_blank">下载 / 打开原文件</a>
-        </div>`;
+            <a class="back-btn" style="margin-top:1rem;display:inline-block;" href="${rawUrl}" target="_blank">下载原文件</a></div>`;
     }
 }
 
@@ -107,87 +115,47 @@ function addNote() {
     div.className = 'inline-note';
     div.textContent = '📝 ' + text;
     const sel = window.getSelection();
-    if (sel.rangeCount) {
-        const range = sel.getRangeAt(0);
-        range.collapse(false);
-        range.insertNode(div);
-    } else {
-        document.getElementById('editor').appendChild(div);
-    }
+    if (sel.rangeCount) { const range = sel.getRangeAt(0); range.collapse(false); range.insertNode(div); }
+    else { document.getElementById('editor').appendChild(div); }
     scheduleSave();
 }
 
 // ---- 自动保存 ----
+function currentMarkdown() { return tdService.turndown(document.getElementById('editor').innerHTML); }
 function scheduleSave() {
     const status = document.getElementById('saveStatus');
-    status.textContent = '编辑中…';
-    status.className = 'save-status saving';
+    status.textContent = '编辑中…'; status.className = 'save-status saving';
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNotes, 1200);
 }
-
 async function saveNotes() {
     const status = document.getElementById('saveStatus');
-    status.textContent = '保存中…';
-    status.className = 'save-status saving';
-    const md = tdService.turndown(document.getElementById('editor').innerHTML);
+    status.textContent = '保存中…'; status.className = 'save-status saving';
     try {
         await fetch(`/api/session/${sessionId}/notes`, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ notes_md: md }),
+            body: JSON.stringify({ notes_md: currentMarkdown() }),
         });
-        status.textContent = '✓ 已保存';
-        status.className = 'save-status saved';
-    } catch (e) {
-        status.textContent = '保存失败';
-        status.className = 'save-status';
-    }
+        status.textContent = '✓ 已保存'; status.className = 'save-status saved';
+    } catch (e) { status.textContent = '保存失败'; status.className = 'save-status'; }
 }
 
-// ---- AI 聊天 ----
-function chatKey() { return `chat_${sessionData.title}`; }
-function getChat() { try { return JSON.parse(localStorage.getItem(chatKey()) || '[]'); } catch { return []; } }
-function saveChat(log) { localStorage.setItem(chatKey(), JSON.stringify(log)); }
-
-function renderChat() {
-    const log = getChat();
-    const box = document.getElementById('chatLog');
-    box.innerHTML = log.map(m => `<div class="chat-msg ${m.type}">${escapeHtml(m.content)}</div>`).join('');
-    box.scrollTop = box.scrollHeight;
+// ---- 导出 Word ----
+async function exportWord() {
+    try {
+        const res = await fetch('/api/export/docx', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notes_md: currentMarkdown(), subject: sessionData.title || '课程笔记' }),
+        });
+        if (!res.ok) throw new Error('导出失败');
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${sessionData.title || '课程笔记'}.docx`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+    } catch (e) { alert('导出 Word 失败：' + e.message); }
 }
-
-function addChat(type, content) {
-    const log = getChat();
-    log.push({ type, content });
-    saveChat(log);
-    renderChat();
-}
-
-function sendChat() {
-    const input = document.getElementById('chatInput');
-    const msg = input.value.trim();
-    if (!msg) return;
-    addChat('user', msg);
-    input.value = '';
-    setTimeout(() => addChat('ai', aiReply(msg)), 400);
-}
-
-function quick(action) {
-    addChat('user', action);
-    setTimeout(() => addChat('ai', aiReply(action)), 400);
-}
-
-function aiReply(msg) {
-    const m = msg.toLowerCase();
-    if (m.includes('重点')) return '本节重点：\n1. 核心概念与定义\n2. 教师强调的考点\n3. 典型案例\n建议优先复习标红内容。';
-    if (m.includes('考试') || m.includes('题')) return '【示例题目】\n一、名词解释\n二、简答题：请简述本节核心观点\n三、论述题';
-    if (m.includes('精简')) return '可以选中要精简的段落，我会帮你压缩为要点式表达。';
-    return '我已理解你的问题，建议结合左侧原始资料与中间总结一起复习。';
-}
-
-document.getElementById('chatInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
-});
 
 // ---- 工具 ----
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
@@ -203,3 +171,167 @@ function matIcon(kind) {
 }
 
 init();
+
+// ===== AI 对话（真实接入 ModelScope） =====
+let chatHistory = [];   // [{role:'user'|'assistant', content}]
+let availableModels = [];
+
+async function loadModels() {
+    try {
+        const res = await fetch('/api/models');
+        const data = await res.json();
+        availableModels = data.models || [];
+        const sel = document.getElementById('modelSelect');
+        sel.innerHTML = availableModels.map(m =>
+            `<option value="${m.id}" ${m.id === data.default ? 'selected' : ''}>${m.label}</option>`
+        ).join('');
+    } catch (e) {
+        document.getElementById('modelSelect').innerHTML = '<option>默认模型</option>';
+    }
+}
+
+function chatKey() { return `chat_session_${sessionId}`; }
+function renderChat() {
+    const box = document.getElementById('chatLog');
+    if (chatHistory.length === 0) {
+        try { chatHistory = JSON.parse(localStorage.getItem(chatKey()) || '[]'); } catch { chatHistory = []; }
+    }
+    if (chatHistory.length === 0) {
+        box.innerHTML = `<div class="chat-msg ai">你好，我是 AI 学习助手。可以问我关于这门课程的任何问题 😊</div>`;
+        return;
+    }
+    box.innerHTML = chatHistory.map(m =>
+        `<div class="chat-msg ${m.role === 'user' ? 'user' : 'ai'}">${m.role === 'assistant' ? marked.parse(m.content) : escapeHtml(m.content)}</div>`
+    ).join('');
+    box.scrollTop = box.scrollHeight;
+}
+
+async function sendChat() {
+    const input = document.getElementById('chatInput');
+    const sendBtn = document.getElementById('chatSend');
+    const msg = input.value.trim();
+    if (!msg) return;
+
+    chatHistory.push({ role: 'user', content: msg });
+    input.value = '';
+    renderChat();
+
+    // 思考中占位
+    const box = document.getElementById('chatLog');
+    const thinking = document.createElement('div');
+    thinking.className = 'chat-msg ai thinking';
+    thinking.textContent = 'AI 正在思考…';
+    box.appendChild(thinking);
+    box.scrollTop = box.scrollHeight;
+    sendBtn.disabled = true;
+
+    try {
+        const model = document.getElementById('modelSelect').value;
+        const res = await fetch('/api/chat', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                messages: chatHistory,
+                model,
+                notes_context: currentMarkdown(),
+            }),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        chatHistory.push({ role: 'assistant', content: data.reply });
+    } catch (e) {
+        chatHistory.push({ role: 'assistant', content: '⚠️ 出错了：' + e.message });
+    } finally {
+        sendBtn.disabled = false;
+        localStorage.setItem(chatKey(), JSON.stringify(chatHistory));
+        renderChat();
+    }
+}
+
+document.getElementById('chatInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+
+// ===== 思维导图 =====
+function renderMindmap(md) {
+    if (!window.markmap || !md) return;
+    try {
+        const { Markmap, Transformer } = window.markmap;
+        const transformer = new Transformer();
+        const { root } = transformer.transform(md);
+        const svg = document.getElementById('mindmap-svg');
+        svg.innerHTML = '';
+        mmInstance = Markmap.create('#mindmap-svg', null, root);
+        setTimeout(() => { if (mmInstance) mmInstance.fit(); }, 100);
+    } catch (e) { console.error('思维导图渲染失败:', e); }
+}
+
+function exportMindmap(format) {
+    const svg = document.getElementById('mindmap-svg');
+    if (!svg || !currentMindmapMd) { alert('暂无思维导图可导出'); return; }
+    const clone = svg.cloneNode(true);
+    const bbox = svg.getBoundingClientRect();
+    const w = Math.max(bbox.width, 800), h = Math.max(bbox.height, 600);
+    clone.setAttribute('width', w); clone.setAttribute('height', h);
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('width', w); rect.setAttribute('height', h);
+    rect.setAttribute('fill', format === 'png' ? 'transparent' : '#FFFFFF');
+    clone.insertBefore(rect, clone.firstChild);
+    const xml = new XMLSerializer().serializeToString(clone);
+    const url = URL.createObjectURL(new Blob([xml], { type: 'image/svg+xml;charset=utf-8' }));
+    const img = new Image();
+    img.onload = () => {
+        const scale = 2;
+        const canvas = document.createElement('canvas');
+        canvas.width = w * scale; canvas.height = h * scale;
+        const ctx = canvas.getContext('2d');
+        if (format !== 'png') { ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+        ctx.scale(scale, scale); ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        const name = (sessionData && sessionData.title) || '思维导图';
+        if (format === 'pdf') {
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF({ orientation: w > h ? 'l' : 'p', unit: 'px', format: [w, h] });
+            pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, w, h);
+            pdf.save(`${name}-思维导图.pdf`);
+        } else {
+            const a = document.createElement('a');
+            a.download = `${name}-思维导图.${format}`;
+            a.href = canvas.toDataURL(format === 'jpg' ? 'image/jpeg' : 'image/png', 0.95);
+            a.click();
+        }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); alert('导出失败，请重试'); };
+    img.src = url;
+}
+
+// ===== 三栏宽度拖拽调节 =====
+function setupGutter(gutterId, leftSel, rightSel) {
+    const gutter = document.getElementById(gutterId);
+    const layout = document.getElementById('layout');
+    let dragging = false;
+    gutter.addEventListener('mousedown', () => {
+        dragging = true; gutter.classList.add('dragging');
+        document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
+    });
+    document.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const left = document.querySelector(leftSel);
+        const rect = layout.getBoundingClientRect();
+        if (gutterId === 'gutter1') {
+            // 调节左栏宽度
+            let w = e.clientX - left.getBoundingClientRect().left;
+            w = Math.max(220, Math.min(w, rect.width - 500));
+            left.style.flex = `0 0 ${w}px`;
+        } else {
+            // 调节右栏宽度
+            let w = rect.right - e.clientX;
+            w = Math.max(260, Math.min(w, rect.width - 500));
+            document.querySelector(rightSel).style.flex = `0 0 ${w}px`;
+        }
+    });
+    document.addEventListener('mouseup', () => {
+        if (dragging) { dragging = false; gutter.classList.remove('dragging'); document.body.style.cursor = ''; document.body.style.userSelect = ''; }
+    });
+}
+setupGutter('gutter1', '#colLeft', '#colRight');
+setupGutter('gutter2', '#colLeft', '#colRight');

@@ -27,8 +27,6 @@ async function loadCourse() {
 
     renderSessions();
     renderMaterials();
-    renderNotes();
-    renderChat();
 
     // 默认加载最新（且未隐藏）会话的内容
     const firstVisible = sessions.find(s => !isHidden(s.id));
@@ -167,7 +165,53 @@ function renderMaterials() {
 
 function previewMaterial(i) {
     const m = materials[i];
-    if (m && m.url) window.open(m.url, '_blank');
+    if (!m) return;
+    const modal = document.getElementById('previewModal');
+    const body = document.getElementById('previewBody');
+    document.getElementById('previewTitle').textContent = m.name || '预览';
+    modal.classList.add('active');
+
+    const kind = m.kind;
+    const rawUrl = m.url;                                   // 原始文件
+    const previewUrl = `/api/preview/${m.session_id}/${encodeURIComponent(m.name)}`;
+
+    if (kind === 'image') {
+        body.innerHTML = `<img src="${rawUrl}" alt="${escapeHtml(m.name)}">`;
+    } else if (kind === 'audio') {
+        body.innerHTML = `<audio controls src="${rawUrl}"></audio>`;
+    } else if (kind === 'pdf') {
+        body.innerHTML = `<iframe src="${rawUrl}"></iframe>`;
+    } else if (kind === 'text') {
+        body.innerHTML = `<iframe src="${rawUrl}"></iframe>`;
+    } else if (kind === 'ppt' || kind === 'word') {
+        // 通过后端转 PDF 预览，失败则回退文字
+        body.innerHTML = `<div class="preview-loading">正在转换预览，请稍候…</div>`;
+        fetch(previewUrl).then(async (r) => {
+            const ct = r.headers.get('content-type') || '';
+            if (ct.includes('application/pdf')) {
+                body.innerHTML = `<iframe src="${previewUrl}"></iframe>`;
+            } else {
+                const data = await r.json().catch(() => ({}));
+                if (data.text) {
+                    body.innerHTML = `<div class="md-text">${marked.parse(data.text)}</div>`;
+                } else {
+                    body.innerHTML = `<div class="preview-loading">无法预览，<a href="${rawUrl}" target="_blank">下载原文件</a></div>`;
+                }
+            }
+        }).catch(() => {
+            body.innerHTML = `<div class="preview-loading">预览失败，<a href="${rawUrl}" target="_blank">下载原文件</a></div>`;
+        });
+    } else {
+        body.innerHTML = `<div class="preview-loading">该格式无法在线预览，<a href="${rawUrl}" target="_blank">下载原文件</a></div>`;
+    }
+}
+
+function closePreview(ev) {
+    if (ev && ev.target.id !== 'previewModal' && ev.type === 'click' && ev.currentTarget.id !== 'previewModal') {
+        // 仅在点击遮罩或关闭按钮时关闭
+    }
+    document.getElementById('previewModal').classList.remove('active');
+    document.getElementById('previewBody').innerHTML = '';
 }
 
 function fmtSize(bytes) {
@@ -175,25 +219,6 @@ function fmtSize(bytes) {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
     return (bytes / 1024 / 1024).toFixed(1) + ' MB';
-}
-
-// ---- 我的笔记（汇总各会话的 Note）----
-function renderNotes() {
-    const pane = document.getElementById('notes-pane');
-    pane.innerHTML = `<div class="empty-mini"><div class="ico">📝</div><p>在工作区为知识点添加的批注会显示在这里</p></div>`;
-}
-
-// ---- AI 对话记录 ----
-function renderChat() {
-    const pane = document.getElementById('chat-pane');
-    const key = `chat_${courseData.name}`;
-    const log = JSON.parse(localStorage.getItem(key) || '[]');
-    if (log.length === 0) {
-        pane.innerHTML = `<div class="empty-mini"><div class="ico">💬</div><p>暂无 AI 对话记录</p></div>`;
-        return;
-    }
-    pane.innerHTML = `<div class="chat-log">${log.map(m =>
-        `<div class="chat-msg ${m.type}">${escapeHtml(m.content)}</div>`).join('')}</div>`;
 }
 
 // ---- 工具函数 ----

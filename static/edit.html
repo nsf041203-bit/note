@@ -31,20 +31,22 @@
         .save-status.saving { color: #E08A3C; }
         .save-status.saved { color: #4CAF82; }
 
-        /* 三栏布局 */
-        .editor-layout {
-            display: grid; grid-template-columns: 1fr 1.2fr 360px;
-            height: calc(100vh - 56px);
+        /* 三栏布局（可拖拽调节宽度） */
+        .editor-layout { display: flex; height: calc(100vh - 56px); }
+        .col { display: flex; flex-direction: column; overflow: hidden; min-width: 220px; }
+        .col.left { flex: 0 0 33%; }
+        .col.mid { flex: 1 1 auto; }
+        .col.right { flex: 0 0 360px; }
+        .gutter {
+            flex: 0 0 6px; cursor: col-resize; background: #E2D9C8;
+            transition: background 0.15s; position: relative;
         }
-        .col {
-            display: flex; flex-direction: column; overflow: hidden;
-            border-right: 1px solid #E2D9C8;
-        }
-        .col:last-child { border-right: none; }
+        .gutter:hover, .gutter.dragging { background: #C8853F; }
+
         .col-head {
             padding: 0.8rem 1.2rem; font-weight: 600; font-size: 0.9rem;
             border-bottom: 1px solid #E2D9C8; background: #FBF7EF;
-            display: flex; justify-content: space-between; align-items: center;
+            display: flex; justify-content: space-between; align-items: center; gap: 0.5rem;
         }
         .col-body { flex: 1; overflow-y: auto; padding: 1rem; }
 
@@ -56,10 +58,11 @@
             max-width: 140px; overflow: hidden; text-overflow: ellipsis;
         }
         .file-tab.active { background: #C8853F; color: #fff; border-color: #C8853F; }
-        .preview-area { width: 100%; height: 100%; }
+        .preview-area { width: 100%; height: calc(100% - 2.5rem); min-height: 300px; }
         .preview-area iframe { width: 100%; height: 100%; border: none; border-radius: 0.5rem; background: #fff; }
         .preview-area img { max-width: 100%; border-radius: 0.5rem; }
         .preview-area audio { width: 100%; margin-top: 1rem; }
+        .preview-area .md-text { line-height: 1.8; }
         .preview-empty { text-align: center; color: #8A8A80; padding: 3rem 1rem; }
         .preview-empty .ico { font-size: 2.5rem; margin-bottom: 0.8rem; }
         .preview-note { font-size: 0.8rem; color: #A0A096; margin-top: 0.8rem; text-align:center; }
@@ -71,9 +74,11 @@
             background: #FFFFFF; cursor: pointer; font-size: 0.8rem; transition: all 0.15s;
         }
         .tool-btn:hover { background: #F0E3D0; border-color: #C8853F; }
+        .tool-btn.export { background: #C8853F; color: #fff; border-color: #C8853F; }
+        .tool-btn.export:hover { background: #A86B2C; }
+        .mid-scroll { flex: 1; overflow-y: auto; }
         .editor {
-            flex: 1; padding: 1.5rem; outline: none; overflow-y: auto; line-height: 1.8;
-            font-size: 0.95rem;
+            padding: 1.5rem; outline: none; line-height: 1.8; font-size: 0.95rem; min-height: 50%;
         }
         .editor h1 { font-family:'DM Serif Display',serif; font-size:1.7rem; border-bottom:2px solid #E2D9C8; padding-bottom:0.5rem; margin:1rem 0 0.8rem; }
         .editor h2 { font-family:'DM Serif Display',serif; font-size:1.35rem; margin:1rem 0 0.6rem; }
@@ -85,21 +90,30 @@
         .hl-green { background:#cdeccd; } .hl-blue { background:#cfe4f7; }
         .inline-note { background:#FDF6E3; border-left:3px solid #E5B53A; padding:0.4rem 0.7rem; margin:0.5rem 0; border-radius:0.4rem; font-size:0.88rem; }
 
-        /* 右栏 */
-        .right-section { margin-bottom: 1.5rem; }
-        .right-section h4 { font-size: 0.82rem; color:#8A8A80; margin-bottom:0.6rem; text-transform:uppercase; letter-spacing:0.04em; }
-        .outline-box { background:#FBF7EF; border:1px solid #E2D9C8; border-radius:0.6rem; padding:0.9rem; font-size:0.85rem; white-space:pre-wrap; color:#5A5A52; max-height:200px; overflow-y:auto; }
-        .quick-actions { display:flex; flex-direction:column; gap:0.5rem; }
-        .quick-btn { padding:0.6rem 0.8rem; background:#FFFFFF; border:1px solid #E2D9C8; border-radius:0.5rem; cursor:pointer; font-size:0.85rem; text-align:left; transition:all 0.15s; }
-        .quick-btn:hover { background:#F0E3D0; border-color:#C8853F; }
-        .chat-log { display:flex; flex-direction:column; gap:0.6rem; margin-bottom:0.8rem; max-height:280px; overflow-y:auto; }
-        .chat-msg { padding:0.6rem 0.85rem; border-radius:0.6rem; font-size:0.85rem; max-width:90%; line-height:1.5; }
+        /* 思维导图（编辑器底部） */
+        .mindmap-block { border-top: 2px dashed #E2D9C8; padding: 1.2rem 1.5rem; }
+        .mindmap-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:0.8rem; flex-wrap:wrap; gap:0.5rem; }
+        .mindmap-head .title { font-weight:700; font-size:1.05rem; }
+        .mm-exports { display:flex; gap:0.5rem; }
+        .mm-btn { padding:0.45rem 0.9rem; background:#FFFFFF; border:1px solid #E2D9C8; border-radius:0.5rem; cursor:pointer; font-size:0.8rem; transition:all 0.15s; }
+        .mm-btn:hover { background:#F0E3D0; border-color:#C8853F; }
+        .mindmap-box { background:#FBF7EF; border:1px solid #E2D9C8; border-radius:0.7rem; height:420px; }
+        #mindmap-svg { width:100%; height:100%; }
+
+        /* 右栏：纯对话 */
+        .col.right .col-body { display: flex; flex-direction: column; padding: 0; }
+        .model-bar { padding: 0.7rem 1rem; border-bottom: 1px solid #E2D9C8; display:flex; align-items:center; gap:0.5rem; }
+        .model-bar select { flex:1; padding:0.45rem 0.6rem; border:1px solid #E2D9C8; border-radius:0.5rem; font-family:inherit; font-size:0.82rem; }
+        .chat-log { flex:1; overflow-y:auto; padding:1rem; display:flex; flex-direction:column; gap:0.7rem; }
+        .chat-msg { padding:0.65rem 0.9rem; border-radius:0.7rem; font-size:0.88rem; max-width:88%; line-height:1.6; word-wrap:break-word; }
         .chat-msg.user { background:#C8853F; color:#fff; align-self:flex-end; }
         .chat-msg.ai { background:#FBF7EF; border:1px solid #E2D9C8; align-self:flex-start; }
-        .chat-input-row { display:flex; gap:0.5rem; }
-        .chat-input { flex:1; padding:0.6rem; border:2px solid #E2D9C8; border-radius:0.5rem; font-size:0.85rem; font-family:inherit; resize:none; }
+        .chat-msg.ai.thinking { color:#A0A096; font-style:italic; }
+        .chat-input-row { display:flex; gap:0.5rem; padding:0.8rem; border-top:1px solid #E2D9C8; }
+        .chat-input { flex:1; padding:0.6rem; border:2px solid #E2D9C8; border-radius:0.5rem; font-size:0.85rem; font-family:inherit; resize:none; max-height:120px; }
         .chat-input:focus { outline:none; border-color:#C8853F; }
-        .chat-send { padding:0.6rem 1rem; background:#C8853F; color:#fff; border:none; border-radius:0.5rem; cursor:pointer; font-weight:600; }
+        .chat-send { padding:0 1.1rem; background:#C8853F; color:#fff; border:none; border-radius:0.5rem; cursor:pointer; font-weight:600; }
+        .chat-send:disabled { background:#C7BCA8; cursor:not-allowed; }
     </style>
 </head>
 <body>
@@ -111,9 +125,9 @@
         <span class="save-status" id="saveStatus">已保存</span>
     </nav>
 
-    <div class="editor-layout">
+    <div class="editor-layout" id="layout">
         <!-- 左栏：原始资料预览 -->
-        <div class="col">
+        <div class="col left" id="colLeft">
             <div class="col-head">📎 课程资料原文件</div>
             <div class="col-body">
                 <div class="file-tabs" id="fileTabs"></div>
@@ -123,8 +137,10 @@
             </div>
         </div>
 
-        <!-- 中栏：AI 总结编辑器 -->
-        <div class="col">
+        <div class="gutter" id="gutter1"></div>
+
+        <!-- 中栏：AI 总结编辑器 + 思维导图 -->
+        <div class="col mid" id="colMid">
             <div class="col-head">
                 ✏️ AI 课程总结（可编辑）
                 <span style="font-size:0.78rem; color:#A0A096; font-weight:400;">修改自动保存</span>
@@ -138,33 +154,38 @@
                 <button class="tool-btn" onmousedown="event.preventDefault()" onclick="hl('blue')">🔵</button>
                 <button class="tool-btn" onmousedown="event.preventDefault()" onclick="addNote()">📝 Note</button>
                 <button class="tool-btn" onmousedown="event.preventDefault()" onclick="exec('insertUnorderedList')">• 列表</button>
+                <button class="tool-btn export" onclick="exportWord()">⬇️ 导出 Word</button>
             </div>
-            <div class="editor" id="editor" contenteditable="true" spellcheck="false"></div>
+            <div class="mid-scroll">
+                <div class="editor" id="editor" contenteditable="true" spellcheck="false"></div>
+                <div class="mindmap-block" id="mindmapBlock" style="display:none;">
+                    <div class="mindmap-head">
+                        <span class="title">🧠 思维导图</span>
+                        <div class="mm-exports">
+                            <button class="mm-btn" onclick="exportMindmap('png')">⬇️ PNG</button>
+                            <button class="mm-btn" onclick="exportMindmap('jpg')">⬇️ JPG</button>
+                            <button class="mm-btn" onclick="exportMindmap('pdf')">⬇️ PDF</button>
+                        </div>
+                    </div>
+                    <div class="mindmap-box"><svg id="mindmap-svg"></svg></div>
+                </div>
+            </div>
         </div>
 
-        <!-- 右栏：聊天 + 提纲 + 快捷操作 -->
-        <div class="col">
+        <div class="gutter" id="gutter2"></div>
+
+        <!-- 右栏：纯 AI 对话 -->
+        <div class="col right" id="colRight">
             <div class="col-head">🤖 AI 助手</div>
             <div class="col-body">
-                <div class="right-section">
-                    <h4>快捷操作</h4>
-                    <div class="quick-actions">
-                        <button class="quick-btn" onclick="quick('总结本节重点')">📌 总结本节重点</button>
-                        <button class="quick-btn" onclick="quick('生成考试题目')">📝 生成考试题目</button>
-                        <button class="quick-btn" onclick="quick('精简这段内容')">✂️ 精简内容</button>
-                    </div>
+                <div class="model-bar">
+                    <span style="font-size:0.8rem; color:#8A8A80;">模型</span>
+                    <select id="modelSelect"></select>
                 </div>
-                <div class="right-section">
-                    <h4>教师提纲</h4>
-                    <div class="outline-box" id="outlineBox">暂无提纲</div>
-                </div>
-                <div class="right-section">
-                    <h4>AI 聊天记录</h4>
-                    <div class="chat-log" id="chatLog"></div>
-                    <div class="chat-input-row">
-                        <textarea class="chat-input" id="chatInput" rows="2" placeholder="向 AI 提问…"></textarea>
-                        <button class="chat-send" onclick="sendChat()">发送</button>
-                    </div>
+                <div class="chat-log" id="chatLog"></div>
+                <div class="chat-input-row">
+                    <textarea class="chat-input" id="chatInput" rows="2" placeholder="向 AI 提问…（Enter 发送）"></textarea>
+                    <button class="chat-send" id="chatSend" onclick="sendChat()">发送</button>
                 </div>
             </div>
         </div>
@@ -172,6 +193,10 @@
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/turndown/dist/turndown.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script src="https://cdn.jsdelivr.net/npm/markmap-view"></script>
+    <script src="https://cdn.jsdelivr.net/npm/markmap-lib"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="/static/edit.js"></script>
 </body>
 </html>

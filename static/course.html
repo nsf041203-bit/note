@@ -143,6 +143,31 @@
         .chat-msg.ai { background:#FBF7EF; border:1px solid #E2D9C8; }
 
         @media (max-width: 640px) { .container { padding: 1.5rem; } nav { padding: 1rem 1.5rem; } }
+
+        /* 预览弹窗 */
+        .preview-modal {
+            display: none; position: fixed; inset: 0; z-index: 500;
+            background: rgba(31,36,33,0.55); backdrop-filter: blur(4px);
+            align-items: center; justify-content: center; padding: 2rem;
+        }
+        .preview-modal.active { display: flex; }
+        .preview-dialog {
+            background: #fff; border-radius: 1rem; width: min(960px, 95vw);
+            height: min(85vh, 900px); display: flex; flex-direction: column;
+            overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        .preview-modal-head {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0.9rem 1.3rem; border-bottom: 1px solid #E2D9C8; font-weight: 600;
+        }
+        .preview-close { cursor: pointer; color: #8A8A80; font-size: 1.1rem; }
+        .preview-close:hover { color: #C8853F; }
+        .preview-modal-body { flex: 1; overflow: auto; background: #F6F1E8; }
+        .preview-modal-body iframe { width: 100%; height: 100%; border: none; }
+        .preview-modal-body img { max-width: 100%; display: block; margin: 0 auto; }
+        .preview-modal-body audio { width: 90%; margin: 2rem auto; display: block; }
+        .preview-modal-body .md-text { padding: 2rem; line-height: 1.8; }
+        .preview-loading { padding: 3rem; text-align: center; color: #8A8A80; }
     </style>
 </head>
 <body>
@@ -166,8 +191,6 @@
         <div class="tabs">
             <div class="tab active" data-tab="summary">📄 课程总结</div>
             <div class="tab" data-tab="materials">📂 课堂资料</div>
-            <div class="tab" data-tab="notes">📝 我的笔记</div>
-            <div class="tab" data-tab="chat">💬 AI 对话记录</div>
         </div>
 
         <!-- 课程总结：会话列表 + 选中内容 + 思维导图 -->
@@ -194,12 +217,17 @@
 
         <!-- 课堂资料 -->
         <div class="pane" id="materials-pane"></div>
+    </div>
 
-        <!-- 我的笔记 -->
-        <div class="pane" id="notes-pane"></div>
-
-        <!-- AI 对话记录 -->
-        <div class="pane" id="chat-pane"></div>
+    <!-- 资料预览弹窗 -->
+    <div class="preview-modal" id="previewModal" onclick="closePreview(event)">
+        <div class="preview-dialog" onclick="event.stopPropagation()">
+            <div class="preview-modal-head">
+                <span id="previewTitle">预览</span>
+                <span class="preview-close" onclick="closePreview()">✕</span>
+            </div>
+            <div class="preview-modal-body" id="previewBody"></div>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
