@@ -2,6 +2,8 @@ import asyncio
 import os
 import traceback
 import uuid
+import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Literal
 
@@ -62,6 +64,15 @@ def _set(job_id: str, status: str, progress: str):
 
 def _extract_docx_text(path: str) -> str:
     """提取 Word 文档中的正文、表格和页眉页脚文本。"""
+    try:
+        return _extract_docx_text_with_python_docx(path)
+    except Exception as exc:
+        print(f"[Word提取] python-docx 解析失败，改用 XML 兜底: {exc!r}")
+        return _extract_docx_text_from_xml(path)
+
+
+def _extract_docx_text_with_python_docx(path: str) -> str:
+    """优先使用 python-docx，能较好处理普通段落和表格。"""
     from docx import Document
 
     doc = Document(path)
@@ -78,14 +89,48 @@ def _extract_docx_text(path: str) -> str:
             if cells:
                 parts.append("\t".join(cells))
 
-    for section in doc.sections:
-        for block in (section.header.paragraphs, section.footer.paragraphs):
-            for p in block:
-                text = p.text.strip()
-                if text:
-                    parts.append(text)
+    try:
+        for section in doc.sections:
+            for block in (section.header.paragraphs, section.footer.paragraphs):
+                for p in block:
+                    text = p.text.strip()
+                    if text:
+                        parts.append(text)
+    except Exception as exc:
+        # 某些 Word 文件的页眉页脚关系不完整，正文仍可继续使用。
+        print(f"[Word提取] 页眉页脚读取失败，已跳过: {exc!r}")
 
     return "\n".join(parts).strip()
+
+
+def _extract_docx_text_from_xml(path: str) -> str:
+    """直接读取 docx 压缩包内 XML，作为 python-docx 失败时的兜底。"""
+    paragraphs: list[str] = []
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+
+    with zipfile.ZipFile(path) as zf:
+        xml_names = [
+            name for name in zf.namelist()
+            if name == "word/document.xml"
+            or name.startswith("word/header")
+            or name.startswith("word/footer")
+        ]
+        for name in xml_names:
+            root = ET.fromstring(zf.read(name))
+            for para in root.findall(".//w:p", ns):
+                chunks: list[str] = []
+                for node in para.iter():
+                    if node.tag == f"{{{ns['w']}}}t" and node.text:
+                        chunks.append(node.text)
+                    elif node.tag == f"{{{ns['w']}}}tab":
+                        chunks.append("\t")
+                    elif node.tag == f"{{{ns['w']}}}br":
+                        chunks.append("\n")
+                text = "".join(chunks).strip()
+                if text:
+                    paragraphs.append(text)
+
+    return "\n".join(paragraphs).strip()
 
 
 async def _run_pipeline(job_id: str, subject: str, outline: str, saved_files: list[Path], color: str = "blue"):
