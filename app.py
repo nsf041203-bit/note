@@ -2,6 +2,8 @@ import asyncio
 import os
 import traceback
 import uuid
+import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Literal
 
@@ -60,6 +62,128 @@ def _set(job_id: str, status: str, progress: str):
     jobs[job_id]["progress"] = progress
 
 
+def _extract_docx_markdown(path: str) -> str:
+    """将 Word 文档转成 Markdown，再交给 AI 整理。"""
+    try:
+        return _extract_docx_markdown_with_python_docx(path)
+    except Exception as exc:
+        print(f"[Word提取] python-docx 解析失败，改用 XML 兜底: {exc!r}")
+        return _extract_docx_markdown_from_xml(path)
+
+
+def _extract_docx_markdown_with_python_docx(path: str) -> str:
+    """优先使用 python-docx，把普通段落、标题、列表和表格转成 Markdown。"""
+    from docx import Document
+
+    doc = Document(path)
+    parts: list[str] = []
+
+    for p in doc.paragraphs:
+        md = _docx_paragraph_to_markdown(p)
+        if md:
+            parts.append(md)
+
+    for table in doc.tables:
+        table_md = _docx_table_to_markdown(table)
+        if table_md:
+            parts.append(table_md)
+
+    try:
+        for section in doc.sections:
+            for block in (section.header.paragraphs, section.footer.paragraphs):
+                for p in block:
+                    md = _docx_paragraph_to_markdown(p)
+                    if md:
+                        parts.append(md)
+    except Exception as exc:
+        # 某些 Word 文件的页眉页脚关系不完整，正文仍可继续使用。
+        print(f"[Word提取] 页眉页脚读取失败，已跳过: {exc!r}")
+
+    return "\n\n".join(parts).strip()
+
+
+def _docx_paragraph_to_markdown(paragraph) -> str:
+    """把 python-docx 段落尽量转换成 Markdown。"""
+    text = paragraph.text.strip()
+    if not text:
+        return ""
+
+    style_name = (paragraph.style.name if paragraph.style else "").lower()
+    if "heading" in style_name or "标题" in style_name:
+        level = 2
+        for token in ("1", "2", "3", "4", "5", "6"):
+            if token in style_name:
+                level = min(int(token), 6)
+                break
+        return f"{'#' * level} {text}"
+
+    if "list bullet" in style_name or "项目符号" in style_name:
+        return f"- {text}"
+    if "list number" in style_name or "编号" in style_name:
+        return f"1. {text}"
+
+    return text
+
+
+def _docx_table_to_markdown(table) -> str:
+    """把 Word 表格转成 Markdown 表格。"""
+    rows: list[list[str]] = []
+    for row in table.rows:
+        cells = [_clean_table_cell(cell.text) for cell in row.cells]
+        if any(cells):
+            rows.append(cells)
+
+    if not rows:
+        return ""
+
+    width = max(len(row) for row in rows)
+    rows = [row + [""] * (width - len(row)) for row in rows]
+    header = rows[0]
+    separator = ["---"] * width
+    body = rows[1:]
+
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join(separator) + " |",
+    ]
+    lines.extend("| " + " | ".join(row) + " |" for row in body)
+    return "\n".join(lines)
+
+
+def _clean_table_cell(text: str) -> str:
+    return " ".join(text.replace("|", "\\|").split())
+
+
+def _extract_docx_markdown_from_xml(path: str) -> str:
+    """直接读取 docx 压缩包内 XML，作为 python-docx 失败时的 Markdown 兜底。"""
+    paragraphs: list[str] = []
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+
+    with zipfile.ZipFile(path) as zf:
+        xml_names = [
+            name for name in zf.namelist()
+            if name == "word/document.xml"
+            or name.startswith("word/header")
+            or name.startswith("word/footer")
+        ]
+        for name in xml_names:
+            root = ET.fromstring(zf.read(name))
+            for para in root.findall(".//w:p", ns):
+                chunks: list[str] = []
+                for node in para.iter():
+                    if node.tag == f"{{{ns['w']}}}t" and node.text:
+                        chunks.append(node.text)
+                    elif node.tag == f"{{{ns['w']}}}tab":
+                        chunks.append("\t")
+                    elif node.tag == f"{{{ns['w']}}}br":
+                        chunks.append("\n")
+                text = "".join(chunks).strip()
+                if text:
+                    paragraphs.append(text)
+
+    return "\n\n".join(paragraphs).strip()
+
+
 async def _run_pipeline(job_id: str, subject: str, outline: str, saved_files: list[Path], color: str = "blue"):
     """后台运行完整处理流程"""
     job_dir = OUTPUT_DIR / job_id
@@ -79,11 +203,25 @@ async def _run_pipeline(job_id: str, subject: str, outline: str, saved_files: li
 
             elif suffix in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
                 _set(job_id, "running", f"🖼️ OCR识别: {fp.name}")
-                from modules.ocr import extract_text
+                try:
+                    from modules.ocr import extract_text
+                except ModuleNotFoundError as exc:
+                    if exc.name == "paddleocr":
+                        _set(
+                            job_id,
+                            "error",
+                            "❌ 当前部署环境未安装 PaddleOCR，暂时不能从图片中提取文字。请改用本地完整环境，或先把图片文字转成 TXT/Word/PDF 后再上传。",
+                        )
+                        return
+                    raise
                 texts.append(await asyncio.to_thread(extract_text, str(fp)))
 
             elif suffix in {".txt", ".md", ".srt"}:
                 texts.append(fp.read_text(encoding="utf-8", errors="ignore"))
+
+            elif suffix in {".docx"}:
+                _set(job_id, "running", f"📄 Word转Markdown: {fp.name}")
+                texts.append(await asyncio.to_thread(_extract_docx_markdown, str(fp)))
 
             elif suffix in {".pptx"}:
                 _set(job_id, "running", f"📊 提取PPT文字: {fp.name}")

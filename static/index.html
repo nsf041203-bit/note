@@ -448,6 +448,8 @@
         let currentSubject = '';
         let currentMarkdown = '';   // 当前笔记的 markdown 源
         let mm = null;              // markmap 实例
+        let progressTicker = null;
+        let progressMessageIndex = 0;
 
         const audioExts = ['.mp3','.wav','.m4a','.ogg','.flac'];
         const docExts   = ['.pdf','.pptx','.docx','.txt','.md','.srt'];
@@ -472,6 +474,50 @@
             t.textContent = msg;
             t.classList.add('show');
             setTimeout(() => t.classList.remove('show'), 2200);
+        }
+
+        const waitingProgressMessages = [
+            '正在上传资料...',
+            '正在读取文件内容...',
+            '正在加载中...',
+            '正在努力处理中...',
+            '正在整理资料结构...',
+            '正在等待模型响应...',
+            '快好了，正在收尾...'
+        ];
+
+        function setProgressText(text) {
+            document.getElementById('progressText').textContent = text;
+        }
+
+        function advanceProgress(step = 3, max = 92) {
+            const fill = document.getElementById('progressFill');
+            const percent = document.getElementById('progressPercent');
+            const current = parseInt(fill.style.width) || 0;
+            if (current < max) {
+                const next = Math.min(current + step, max);
+                fill.style.width = next + '%';
+                percent.textContent = next + '%';
+            }
+        }
+
+        function startProgressFeedback(initialText = '正在上传资料...') {
+            clearInterval(progressTicker);
+            progressMessageIndex = 0;
+            document.getElementById('progressContainer').style.display = 'block';
+            document.getElementById('progressFill').style.width = '0%';
+            document.getElementById('progressPercent').textContent = '0%';
+            setProgressText(initialText);
+            progressTicker = setInterval(() => {
+                progressMessageIndex = (progressMessageIndex + 1) % waitingProgressMessages.length;
+                setProgressText(waitingProgressMessages[progressMessageIndex]);
+                advanceProgress(2, 92);
+            }, 2200);
+        }
+
+        function stopProgressFeedback() {
+            clearInterval(progressTicker);
+            progressTicker = null;
         }
 
         // 高亮「考试重点」引用块
@@ -579,8 +625,7 @@
 
             const btn = document.getElementById('processBtn');
             btn.disabled = true;
-            document.getElementById('progressContainer').style.display = 'block';
-            document.getElementById('progressFill').style.width = '0%';
+            startProgressFeedback('正在上传资料...');
 
             const fd = new FormData();
             fd.append('subject', subject);
@@ -594,19 +639,19 @@
                 currentJobId = job_id;
                 currentSubject = subject;
                 localStorage.setItem('lastCourse', subject);
+                updateProgress('资料上传完成，正在进入处理流程...');
                 pollStatus(job_id);
             } catch (err) {
                 toast('上传失败: ' + err.message);
                 btn.disabled = false;
+                stopProgressFeedback();
                 document.getElementById('progressContainer').style.display = 'none';
             }
         };
 
         function updateProgress(text) {
-            document.getElementById('progressText').textContent = text;
-            const fill = document.getElementById('progressFill');
-            const w = parseInt(fill.style.width) || 0;
-            if (w < 90) { fill.style.width = (w + 8) + '%'; document.getElementById('progressPercent').textContent = (w + 8) + '%'; }
+            if (text) setProgressText(text);
+            advanceProgress(6, 94);
         }
 
         async function pollStatus(jobId) {
@@ -618,6 +663,7 @@
 
                     if (data.status === 'done') {
                         clearInterval(interval);
+                        stopProgressFeedback();
                         document.getElementById('processBtn').disabled = false;
                         document.getElementById('progressFill').style.width = '100%';
                         document.getElementById('progressPercent').textContent = '100%';
@@ -635,6 +681,7 @@
                         toast('AI 整理完成');
                     } else if (data.status === 'error') {
                         clearInterval(interval);
+                        stopProgressFeedback();
                         document.getElementById('processBtn').disabled = false;
                         document.getElementById('progressContainer').style.display = 'none';
                         toast('处理失败：' + (data.progress || '处理出错'));
